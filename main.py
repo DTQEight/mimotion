@@ -23,8 +23,8 @@ def get_int_value_default(_config: dict, _key, default):
 
 # 获取当前时间对应的最大和最小步数
 def get_min_max_by_time(hour=None, minute=None):
-    # 固定随机步数范围 13000~15000
-    return 13000, 15000
+    # 固定随机步数范围 13500~15999
+    return 13500, 15999
 
 
 # 虚拟ip地址
