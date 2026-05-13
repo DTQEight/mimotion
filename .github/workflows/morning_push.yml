@@ -1,0 +1,89 @@
+name: 早晨推送
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # UTC 00:00 = 北京时间 08:00
+  workflow_dispatch:
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: 初始化Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: 推送昨夜刷步结果
+        env:
+          CONFIG: ${{ secrets.CONFIG }}
+        run: |
+          pip3 install requests
+          python3 << 'PYEOF'
+          import json, os, requests
+          from datetime import datetime
+          import pytz
+
+          config = json.loads(os.environ.get("CONFIG", "{}"))
+          now = datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M:%S')
+
+          # 读取凌晨2点运行的结果
+          if os.path.exists("last_run_result.json"):
+              with open("last_run_result.json") as f:
+                  data = json.load(f)
+              run_time = data.get("time", "未知")
+              summary = data.get("summary", "")
+              results = data.get("results", [])
+
+              # 检查是否是今天凌晨的运行
+              from datetime import timedelta
+              today = datetime.now(pytz.timezone('Asia/Shanghai')).date()
+              try:
+                  run_date = datetime.strptime(run_time, "%Y-%m-%d %H:%M:%S").date()
+                  if run_date != today:
+                      title = "⚠️ 刷步异常通知"
+                      content = f"未检测到今日凌晨刷步记录\n最后一次运行: {run_time}\n请检查workflow"
+                  else:
+                      title = "🌅 早安·刷步成功通知"
+                      detail = ""
+                      for r in results:
+                          status = "✅" if r["success"] else "❌"
+                          detail += f"\n{status} 账号: {r['user']}\n   {r['msg']}"
+                      content = f"昨夜刷步时间: {run_time}\n{summary.strip()}{detail}"
+              except:
+                  title = "🌅 早安·刷步通知"
+                  content = f"运行时间: {run_time}\n{summary}"
+          else:
+              title = "⚠️ 刷步异常通知"
+              content = "未找到刷步运行结果文件，可能凌晨执行失败"
+
+          # PushPlus
+          pp_token = config.get("PUSH_PLUS_TOKEN", "")
+          if pp_token and pp_token != "NO":
+              try:
+                  r = requests.post("http://www.pushplus.plus/send", data={
+                      "token": pp_token,
+                      "title": title,
+                      "content": f"<div style='font-size:15px;'>{content}</div>".replace("\n", "<br>"),
+                      "template": "html",
+                      "channel": "wechat"
+                  })
+                  print(f"PushPlus: {r.json().get('msg', 'unknown')}")
+              except Exception as e:
+                  print(f"PushPlus失败: {e}")
+
+          # 企业微信
+          wh_key = config.get("PUSH_WECHAT_WEBHOOK_KEY", "")
+          if wh_key and wh_key != "NO":
+              try:
+                  r = requests.post(
+                      f"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={wh_key}",
+                      json={"msgtype": "markdown_v2", "markdown_v2": {"content": f"## {title}\n{content}"}}
+                  )
+                  print(f"企微: {r.json().get('errmsg', 'unknown')}")
+              except Exception as e:
+                  print(f"企微失败: {e}")
+          PYEOF
