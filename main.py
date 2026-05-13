@@ -231,7 +231,21 @@ def execute():
                 success_count += 1
         summary = f"\n执行账号总数{total}，成功：{success_count}，失败：{total - success_count}"
         print(summary)
-        push_util.push_results(push_results, summary, push_config)
+        # 静默模式跳过推送
+        import os as _os
+        if _os.environ.get("SILENT_MODE") == "1":
+            print("SILENT_MODE 已启用，跳过推送")
+            # 保存结果到文件供 morning_push 使用
+            with open("last_run_result.json", "w") as _f:
+                import json as _json
+                _json.dump({
+                    "results": push_results,
+                    "summary": summary,
+                    "time": format_now()
+                }, _f, ensure_ascii=False)
+            print("结果已保存到 last_run_result.json")
+        else:
+            push_util.push_results(push_results, summary, push_config)
     else:
         print(f"账号数长度[{len(user_list)}]和密码数长度[{len(passwd_list)}]不匹配，跳过执行")
         exit(1)
