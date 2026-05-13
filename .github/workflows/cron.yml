@@ -20,14 +20,9 @@ jobs:
 
       - name: 检查今日是否已执行
         id: check
-        env:
-          GH_TOKEN: ${{ secrets.PAT }}
         run: |
-          # 获取今天北京时间的日期
           today=$(TZ=Asia/Shanghai date '+%Y-%m-%d')
           echo "today=$today" >> $GITHUB_OUTPUT
-
-          # 检查今天的提交日志是否包含刷步数记录
           latest_log=$(cat cron_change_time 2>/dev/null || echo "")
           if echo "$latest_log" | grep -q "$today"; then
             echo "今日已执行过刷步数，跳过"
@@ -46,6 +41,64 @@ jobs:
           pip3 install requests pytz pycryptodome
           python3 main.py
 
+      - name: 微信通知兜底结果
+        if: steps.check.outputs.skip == 'false'
+        env:
+          CONFIG: ${{ secrets.CONFIG }}
+        run: |
+          pip3 install requests
+          python3 << 'NOTIFY'
+          import json, os, requests
+          from datetime import datetime
+          import pytz
+
+          config = json.loads(os.environ.get("CONFIG", "{}"))
+          now = datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M:%S')
+
+          title = f"⚠️ 刷步数兜底通知"
+          content = f"主workflow未在凌晨2点执行，已于 {now} 自动补跑。\n请检查主workflow是否正常。"
+
+          # PushPlus 推送
+          pp_token = config.get("PUSH_PLUS_TOKEN")
+          if pp_token and pp_token != "NO":
+              try:
+                  r = requests.post("http://www.pushplus.plus/send", data={
+                      "token": pp_token,
+                      "title": title,
+                      "content": f"<div style='color:#e6a23c;font-size:16px;'>{content}</div>",
+                      "template": "html",
+                      "channel": "wechat"
+                  })
+                  print(f"PushPlus: {r.json().get('msg', 'unknown')}")
+              except Exception as e:
+                  print(f"PushPlus推送失败: {e}")
+
+          # 企业微信 Webhook 推送
+          wh_key = config.get("PUSH_WECHAT_WEBHOOK_KEY")
+          if wh_key and wh_key != "NO":
+              try:
+                  r = requests.post(
+                      f"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={wh_key}",
+                      json={"msgtype": "markdown_v2", "markdown_v2": {"content": f"## {title}\n{content}"}}
+                  )
+                  print(f"企微: {r.json().get('errmsg', 'unknown')}")
+              except Exception as e:
+                  print(f"企微推送失败: {e}")
+
+          # Telegram 推送
+          tg_token = config.get("TELEGRAM_BOT_TOKEN")
+          tg_chat = config.get("TELEGRAM_CHAT_ID")
+          if tg_token and tg_token != "NO" and tg_chat:
+              try:
+                  r = requests.post(
+                      f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                      json={"chat_id": int(tg_chat), "text": f"⚠️ {title}\n{content}", "parse_mode": "HTML"}
+                  )
+                  print(f"Telegram: {r.json().get('ok', 'unknown')}")
+              except Exception as e:
+                  print(f"Telegram推送失败: {e}")
+          NOTIFY
+
       - name: 记录日志
         run: |
           trigger="${{ github.event_name }}"
@@ -56,7 +109,7 @@ jobs:
           if [ "$skip" = "true" ]; then
             echo "今日已执行，兜底跳过" >> cron_change_time
           else
-            echo "兜底执行成功" >> cron_change_time
+            echo "兜底执行成功，已推送微信通知" >> cron_change_time
           fi
 
       - name: Commit and push
