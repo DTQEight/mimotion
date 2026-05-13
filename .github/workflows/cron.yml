@@ -1,5 +1,8 @@
-name: Random Cron
+name: 兜底检查
+
 on:
+  schedule:
+    - cron: '30 18 * * *'
   workflow_run:
     workflows: ["刷步数"]
     types:
@@ -7,28 +10,60 @@ on:
   workflow_dispatch:
 
 jobs:
-  repo-sync:
+  backup-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
-    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v3
         with:
           token: ${{ secrets.PAT }}
-      - name: random cron
+
+      - name: 检查今日是否已执行
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
         run: |
-          source cron_convert.sh
-          echo "configed CRON_HOURS ${{ vars.CRON_HOURS }}"
-          # 只记录日志，不修改 cron
-          echo "trigger by: ${{ github.event_name }}" > cron_change_time
-          current=`TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S'`
-          echo "北京时间: $current" >> cron_change_time
-          echo "cron is fixed, no random change" >> cron_change_time
+          # 获取今天北京时间的日期
+          today=$(TZ=Asia/Shanghai date '+%Y-%m-%d')
+          echo "today=$today" >> $GITHUB_OUTPUT
+
+          # 检查今天的提交日志是否包含刷步数记录
+          latest_log=$(cat cron_change_time 2>/dev/null || echo "")
+          if echo "$latest_log" | grep -q "$today"; then
+            echo "今日已执行过刷步数，跳过"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "今日未执行，需要兜底"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 兜底执行刷步数
+        if: steps.check.outputs.skip == 'false'
+        env:
+          CONFIG: ${{ secrets.CONFIG }}
+          AES_KEY: ${{ secrets.AES_KEY }}
+        run: |
+          pip3 install requests pytz pycryptodome
+          python3 main.py
+
+      - name: 记录日志
+        run: |
+          trigger="${{ github.event_name }}"
+          skip="${{ steps.check.outputs.skip }}"
+          current=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')
+          echo "trigger by: ${trigger}" > cron_change_time
+          echo "北京时间: ${current}" >> cron_change_time
+          if [ "$skip" = "true" ]; then
+            echo "今日已执行，兜底跳过" >> cron_change_time
+          else
+            echo "兜底执行成功" >> cron_change_time
+          fi
+
       - name: Commit and push
         run: |
           git config user.name github-actions
           git config user.email github-actions@users.noreply.github.com
           git add .
-          current=`TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S'`
-          git commit -m "[${current}] log trigger by ${{ github.event_name }}" || true
+          current=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')
+          git commit -m "[${current}] 兜底检查 by ${{ github.event_name }}" || true
           git push origin master
