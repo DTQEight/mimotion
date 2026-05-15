@@ -2,7 +2,9 @@ name: 刷步数
 
 on:
   schedule:
-    - cron: '0 18 * * *'
+    - cron: '0 18 * * *'  # 北京时间凌晨2:00
+    - cron: '10 18 * * *' # 北京时间凌晨2:10
+    - cron: '20 18 * * *' # 北京时间凌晨2:20
   workflow_dispatch:
 
 jobs:
@@ -28,7 +30,7 @@ jobs:
         env:
             CONFIG: ${{ secrets.CONFIG }}
             AES_KEY: ${{ secrets.AES_KEY }}
-            SILENT_MODE: "1"
+            SILENT_MODE: "0"
         run: |
           pip3 install requests pytz pycryptodome
           python3 main.py
