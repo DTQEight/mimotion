@@ -2,9 +2,9 @@ name: 触发刷步数
 
 on:
   schedule:
-    - cron: '55 17 * * *'   # UTC 17:55 = 北京时间 01:55
-    - cron: '0 18 * * *'    # UTC 18:00 = 北京时间 02:00
-    - cron: '5 18 * * *'    # UTC 18:05 = 北京时间 02:05
+    - cron: '55 17 * * *'
+    - cron: '0 18 * * *'
+    - cron: '5 18 * * *'
   workflow_dispatch:
 
 jobs:
@@ -12,12 +12,49 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Trigger 刷步数 via workflow_dispatch
+      - name: 检查今天是否已成功
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          today=$(TZ=Asia/Shanghai date '+%Y-%m-%d')
+          echo "今天: $today"
+          
+          # 查询刷步数 workflow 最近一次运行
+          latest=$(curl -s -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/274662688/runs?per_page=1&status=completed&conclusion=success")
+          
+          run_date=$(echo "$latest" | python3 -c "
+          import json,sys
+          from datetime import datetime, timezone, timedelta
+          data = json.load(sys.stdin)
+          runs = data.get('workflow_runs', [])
+          if runs:
+              created = datetime.fromisoformat(runs[0]['created_at'].replace('Z','+00:00')).astimezone(timezone(timedelta(hours=8)))
+              print(created.strftime('%Y-%m-%d'))
+          else:
+              print('none')
+          ")
+          
+          echo "最近成功日期: $run_date"
+          
+          if [ "$run_date" = "$today" ]; then
+            echo "✅ 今日已执行成功，跳过"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "⏳ 今日未执行，需要触发"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 触发刷步数
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
         run: |
           for i in 1 2 3; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
               -X POST \
-              -H "Authorization: token ${{ secrets.PAT }}" \
+              -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/${{ github.repository }}/actions/workflows/274662688/dispatches" \
               -d '{"ref":"master"}')
